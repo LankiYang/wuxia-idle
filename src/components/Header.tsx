@@ -1,4 +1,4 @@
-import { ACTIONS, fmt } from '../game/data'
+import { ACTIONS, fmt, titleFor } from '../game/data'
 import { battleMonster, game, useGame, totalLevel } from '../game/engine'
 
 export default function Header() {
@@ -7,9 +7,12 @@ export default function Header() {
   const monster = state.battle ? battleMonster(state.battle) : null
   const pct = action && state.active ? Math.min(100, (state.active.elapsed / action.timeSec) * 100) : 0
   const remain = action && state.active ? Math.max(0, action.timeSec - state.active.elapsed) : 0
-  const teaLeft = Math.max(0, state.teaUntil - Date.now())
-  const atkLeft = Math.max(0, state.atkBuffUntil - Date.now())
-  const defLeft = Math.max(0, state.defBuffUntil - Date.now())
+  const teaLeft = Math.max(0, state.teaUntil - state.lastTick)
+  const atkLeft = Math.max(0, state.atkBuffUntil - state.lastTick)
+  const defLeft = Math.max(0, state.defBuffUntil - state.lastTick)
+  const tl = totalLevel(state)
+  const title = titleFor(tl)
+  const slotName = game.activeSlotId ? (game.listSlots().find(s => s.id === game.activeSlotId)?.name ?? 'xbei') : 'xbei'
 
   return (
     <header className="ink-panel relative z-40 flex h-16 items-center gap-4 border-b px-4">
@@ -18,7 +21,7 @@ export default function Header() {
         <div className="ink-seal flex h-11 w-11 items-center justify-center rounded-sm font-brush text-2xl">侠</div>
         <div>
           <div className="font-brush text-2xl leading-none ink-text-gold">武林闲侠传</div>
-          <div className="mt-0.5 text-[10px] ink-text-dim">在线侠客 {36000 + Math.floor(Math.random() * 500)} · 闲云野鹤版</div>
+          <div className="mt-0.5 text-[10px] ink-text-dim">在线侠客 36,240 · 闲云野鹤版</div>
         </div>
       </div>
 
@@ -74,10 +77,12 @@ export default function Header() {
       {/* 角色 */}
       <div className="flex items-center gap-2.5 border-l pl-4 ink-divider">
         <div className="text-right">
-          <div className="text-sm ink-text-paper">xbei</div>
-          <div className="text-[10px] ink-text-dim">总等级 {totalLevel(state)} · 击杀 {state.kills}</div>
+          <div className="text-sm ink-text-paper">{title.icon} {title.name} <span className="ink-text-jade">· {slotName}</span></div>
+          <div className="text-[10px] ink-text-dim">总等级 {tl} · 击杀 {state.kills}</div>
         </div>
         <div className="ink-card flex h-10 w-10 items-center justify-center rounded-sm text-xl">🥋</div>
+        <button onClick={() => game.exitSlot()} title="切换角色（返回选档页）"
+          className="rounded-sm px-1.5 py-1 text-xs opacity-50 hover:bg-white/5 hover:opacity-100">👥</button>
       </div>
 
       {/* 通知 */}

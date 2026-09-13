@@ -1,5 +1,7 @@
 import { LAB_BLESSINGS, LAB_SHOP, STYLES, fmt, labCoinReward, labMonster } from '../game/data'
-import { battleMonster, game, useGame } from '../game/engine'
+import { game, useGame } from '../game/engine'
+import { labMonsterSprite } from '../game/sprites'
+import BattleStage from './BattleStage'
 
 export default function LabyrinthView() {
   const state = useGame()
@@ -25,40 +27,29 @@ export default function LabyrinthView() {
 
         {/* 当前战斗 or 下一层预览 */}
         {inLab && battle ? (
-          (() => {
-            const m = battleMonster(battle)
-            return (
-              <div className="mt-3 rounded-md border border-[#d4504a]/40 bg-[#2a1512]/80 p-4">
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-lg">{m.icon} <span className="ink-text-paper">{m.name}</span></span>
-                  <button onClick={() => game.stopBattle()} className="ink-btn-red rounded px-4 py-1 text-sm">撤离秘境</button>
-                </div>
-                <div className="ink-progress h-3.5 overflow-hidden rounded-full">
-                  <div className="h-full rounded-full bg-gradient-to-r from-[#722a26] to-[#d4504a] transition-all" style={{ width: `${Math.max(0, (battle.monsterHp / m.hp) * 100)}%` }} />
-                </div>
-                <div className="mt-1 flex justify-between text-[10px] ink-text-dim">
-                  <span>HP {Math.max(0, Math.ceil(battle.monsterHp))} / {m.hp}</span>
-                  <span>击杀后自动挑战下一层 · 流派：{STYLES.find(s => s.id === battle.style)?.name}</span>
-                </div>
-                {(battle.blessings?.length ?? 0) > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {battle.blessings!.map(id => {
-                      const bl = LAB_BLESSINGS.find(x => x.id === id)
-                      return bl ? (
-                        <span key={id} className="ink-card rounded px-1.5 py-0.5 text-[10px] ink-text-jade" title={bl.desc}>
-                          {bl.icon} {bl.name}
-                        </span>
-                      ) : null
-                    })}
-                  </div>
-                )}
+          <div className="mt-3">
+            <BattleStage variant="lab" />
+            {/* 已选祝福徽章 */}
+            {(battle.blessings?.length ?? 0) > 0 && (
+              <div className="mb-3 flex flex-wrap justify-center gap-1.5">
+                {battle.blessings!.map(id => {
+                  const bl = LAB_BLESSINGS.find(x => x.id === id)
+                  return bl ? (
+                    <span key={id} className="ink-card rounded px-1.5 py-0.5 text-[10px] ink-text-jade" title={bl.desc}>
+                      {bl.icon} {bl.name}
+                    </span>
+                  ) : null
+                })}
               </div>
-            )
-          })()
+            )}
+          </div>
         ) : (
           <div className="ink-card mt-3 rounded-md p-4">
             <div className="mb-1 flex items-center justify-between">
-              <span className="text-lg">{next.icon} <span className="ink-text-paper">{next.name}</span></span>
+              <span className="flex items-center gap-1.5 text-lg">
+                <img src={labMonsterSprite(floor)} alt={next.name} className="inline-block h-8 w-8 object-contain" style={{ imageRendering: 'pixelated' }} />
+                <span className="ink-text-paper">{next.name}</span>
+              </span>
               {next.isBoss && <span className="rounded bg-[#722a26]/60 px-2 py-0.5 text-[10px] ink-text-red">魔君镇守</span>}
             </div>
             <div className="mb-1 text-[10px] ink-text-dim">HP {fmt(next.hp)} · ATK {next.atk} · DEF {next.def}</div>

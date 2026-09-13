@@ -11,6 +11,8 @@ export default function SkillStrip({ view, setView }: { view: View; setView: (v:
         const pct = Math.min(100, (st.xp / xpToNext(st.level)) * 100)
         const isCombat = s.group === 'combat'
         const active = isCombat ? view.type === 'combat' : view.type === 'skill' && view.skill === s.id
+        // 升级动画：最近一次升级该技能的事件时间作为重挂载 key
+        const lastUp = state.levelUpEvents.filter(e => e.skill === s.id).slice(-1)[0]
         return (
           <button
             key={s.id}
@@ -21,7 +23,7 @@ export default function SkillStrip({ view, setView }: { view: View; setView: (v:
             }`}
           >
             <span className="text-lg leading-none">{s.icon}</span>
-            <span className="text-[10px] ink-text-paper">{s.name} <span className="ink-text-gold">{st.level}</span></span>
+            <span className="text-[10px] ink-text-paper">{s.name} <span key={lastUp ? `lvl-${lastUp.time}` : ''} className={`ink-text-gold ${lastUp ? 'skill-level-up' : ''}`}>{st.level}</span></span>
             <span className="ink-progress block h-1 w-full overflow-hidden rounded-full">
               <span
                 className={`block h-full rounded-full ${isCombat ? 'bg-[#d4504a]' : 'bg-[#c9a063]'}`}

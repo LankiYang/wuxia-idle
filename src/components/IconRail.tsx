@@ -2,13 +2,13 @@ import { game } from '../game/engine'
 import type { View } from '../App'
 
 const NAV: { icon: string; label: string; view: View }[] = [
+  { icon: '🏠', label: '侠客行', view: { type: 'home' } },
   { icon: '🏪', label: '集市', view: { type: 'market' } },
   { icon: '📜', label: '门派任务', view: { type: 'tasks' } },
   { icon: '⚔️', label: '闯荡江湖', view: { type: 'combat' } },
   { icon: '🌀', label: '秘境', view: { type: 'lab' } },
+  { icon: '🏮', label: '江湖英雄榜', view: { type: 'leaderboard' } },
   { icon: '🏆', label: '成就', view: { type: 'achievements' } },
-  { icon: '🛒', label: '商行', view: { type: 'placeholder', name: '商行' } },
-  { icon: '🔔', label: '珍宝阁', view: { type: 'placeholder', name: '珍宝阁' } },
 ]
 
 function sameView(a: View, b: View) {

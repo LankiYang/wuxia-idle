@@ -2,12 +2,15 @@
 import { useSyncExternalStore } from 'react'
 import {
   ACHIEVEMENTS, ACTIONS, AFFIXES, ITEMS, LAB_BLESSINGS, LAB_SHOP, MONSTERS, SKILLS, STYLES, TASK_TEMPLATES,
-  labCoinReward, labMonster, rollAffixes, xpToNext,
+  labCoinReward, labMonster, rollAffixes, titleFor, xpToNext,
   REBIRTH_REQ_LEVEL, REBIRTH_XP_PCT_PER_POINT, REBIRTH_COIN_PCT_PER_POINT, rebirthPointsGain,
-  type AchievementStats, type ActionDef, type AffixRoll, type SkillId, type StyleId,
+  type AchievementStats, type ActionDef, type AffixRoll, type SkillId, type StyleId, type DailyQuest,
 } from './data'
 
 export interface SkillState { level: number; xp: number }
+
+export interface CombatEvent { type: 'dmg' | 'crit' | 'monsterDmg' | 'kill' | 'drop'; value: number; item?: string; time: number }
+export interface GatherEvent { type: 'item'; item: string; count: number; time: number }
 
 export interface TaskState {
   id: number
@@ -61,11 +64,32 @@ export interface GameState {
   chat: ChatMsg[]
   notice: string // 顶部飘过的提示
   lastTick: number
+  autoCraft: Record<string, { actionId: string; elapsed: number } | null> // 自动制造：skillId → 当前配方 + 累计时间
+  autoCombat: { monsterId: string; style: StyleId } | null // 自动战斗：开启时自动打指定怪物
+  daily: { date: string; quests: DailyQuest[] } | null // 每日悬赏：3 个轮换目标，跨天重置
+  combatEvents: CombatEvent[] // 战斗动画事件（不持久化）
+  gatherEvents: GatherEvent[] // 采集动画事件（不持久化）
+  levelUpEvents: { skill: SkillId; level: number; time: number }[] // 升级庆祝事件（不持久化）
 }
 
-const SAVE_KEY = 'wuxia-idle-save-v4'
+const LEGACY_SAVE_KEY = 'wuxia-idle-save-v4' // 旧单存档（v8 迁移来源，保留不删）
+const LEGACY_MIGRATED_KEY = 'wuxia-idle-v5-migrated' // 旧档已迁移标记
+const META_KEY = 'wuxia-idle-v5-meta' // 槽列表元数据
+const SLOT_KEY_PREFIX = 'wuxia-idle-v5-slot-' // 每槽 GameState
+const MAX_SLOTS = 5
 const MAX_TASKS = 6
 const ROUND_SEC = 2
+
+/** 存档槽元信息（GameState 独立存槽 key，切槽只读写对应 key） */
+export interface SlotMeta {
+  id: string
+  name: string
+  createdAt: number
+  updatedAt: number
+}
+
+const DEFAULT_SLOT_NAMES = ['侠客壹', '侠客贰', '侠客叁', '侠客肆', '侠客伍']
+const slotKey = (id: string) => `${SLOT_KEY_PREFIX}${id}`
 
 function freshState(): GameState {
   const skills = {} as Record<SkillId, SkillState>
@@ -96,6 +120,12 @@ function freshState(): GameState {
     chat: [],
     notice: '',
     lastTick: Date.now(),
+    autoCraft: {},
+    autoCombat: null,
+    daily: null,
+    combatEvents: [],
+    gatherEvents: [],
+    levelUpEvents: [],
   }
 }
 
@@ -124,6 +154,51 @@ function rollTask(levels: Record<SkillId, SkillState>): TaskState {
   }
 }
 
+// ── 每日悬赏：每天 3 个轮换目标（决策点，跨天重置）────────────────────────────
+const DAILY_COUNT = 3
+function todayStr() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** 生成 3 个每日悬赏：从玩家已解锁的动作 + 可战怪物中按等级加权抽取 */
+function rollDaily(levels: Record<SkillId, SkillState>): DailyQuest[] {
+  interface Pick { id: string; levelReq: number; item?: string; displayName: string }
+  const actionPool: Pick[] = ACTIONS
+    .filter(a => a.skill !== 'enhancing' && levels[a.skill].level >= a.levelReq)
+    .map(a => ({ id: a.id, levelReq: a.levelReq, item: a.outputs[0].item, displayName: a.name }))
+  const monsterPool: Pick[] = MONSTERS
+    .filter(m => levels.attack.level >= m.levelReq)
+    .map(m => ({ id: m.id, levelReq: m.levelReq, displayName: `${m.icon}${m.name}` }))
+  const pool = [...actionPool, ...monsterPool]
+  if (pool.length === 0) return []
+  const quests: DailyQuest[] = []
+  const used = new Set<string>()
+  while (quests.length < DAILY_COUNT && used.size < pool.length) {
+    const weights = pool.map(p => (used.has(p.id) ? 0 : 1 + p.levelReq * 2))
+    const total = weights.reduce((s, w) => s + w, 0)
+    let roll = Math.random() * total
+    let pick = pool[0]
+    for (let i = 0; i < pool.length; i++) {
+      roll -= weights[i]
+      if (roll <= 0) { pick = pool[i]; break }
+    }
+    if (used.has(pick.id)) continue
+    used.add(pick.id)
+    const count = 8 + Math.floor(Math.random() * 13) // 8~20
+    const unitPrice = pick.item ? (ITEMS[pick.item]?.price ?? 10) : 20
+    quests.push({
+      actionId: pick.id,
+      count,
+      progress: 0,
+      claimed: false,
+      rewardCoins: (count * unitPrice * (0.8 + Math.random() * 0.6)) | 0,
+      rewardTokens: Math.random() < 0.5 ? 1 : 0,
+    })
+  }
+  return quests
+}
+
 // 战斗中的怪物数据（普通怪 or 秘境层怪）
 export interface BattleMonster { name: string; icon: string; hp: number; atk: number; def: number }
 export function battleMonster(b: BattleState): BattleMonster {
@@ -135,9 +210,22 @@ export function battleMonster(b: BattleState): BattleMonster {
 class GameStore {
   state: GameState
   private listeners = new Set<() => void>()
+  /** 当前激活槽 id；null = 未选槽（显示选槽页） */
+  activeSlotId: string | null = null
+  /** 内存中的槽列表 */
+  slots: SlotMeta[] = []
 
   constructor() {
-    this.state = this.load()
+    this.slots = this.readMeta()
+    this.migrateLegacySave()
+    this.slots = this.readMeta()
+    const lastActive = localStorage.getItem(META_KEY) ? this.lastActiveIdFromMeta() : null
+    if (this.slots.some(s => s.id === lastActive)) {
+      this.activeSlotId = lastActive
+      this.state = this.load(lastActive!)
+    } else {
+      this.state = freshState() // 未恢复：占位空档，App 显示选槽页
+    }
     while (this.state.tasks.length < MAX_TASKS) this.state.tasks.push(rollTask(this.state.skills))
     this.state.playerHp = Math.min(this.state.playerHp, this.maxHp())
     this.applyOfflineProgress()
@@ -146,9 +234,47 @@ class GameStore {
     window.addEventListener('beforeunload', () => this.save())
   }
 
-  private load(): GameState {
+  // ── 槽元数据（meta key 存 `${lastActiveId}\n` + JSON 槽列表）──
+  private readMeta(): SlotMeta[] {
     try {
-      const raw = localStorage.getItem(SAVE_KEY)
+      const raw = localStorage.getItem(META_KEY)
+      if (!raw) return []
+      const lines = raw.split('\n')
+      return JSON.parse(lines[lines.length - 1] || '[]') as SlotMeta[]
+    } catch { return [] }
+  }
+  private writeMeta() {
+    try {
+      const raw = [this.activeSlotId ?? '', JSON.stringify(this.slots)].join('\n')
+      localStorage.setItem(META_KEY, raw)
+    } catch { /* ignore */ }
+  }
+  private lastActiveIdFromMeta(): string | null {
+    try {
+      const raw = localStorage.getItem(META_KEY)
+      if (!raw) return null
+      return raw.split('\n')[0] || null
+    } catch { return null }
+  }
+
+  /** 旧单存档 → 槽 0 迁移（保留旧 key 不删） */
+  private migrateLegacySave() {
+    if (localStorage.getItem(LEGACY_MIGRATED_KEY)) return
+    if (this.slots.length > 0) return
+    const raw = localStorage.getItem(LEGACY_SAVE_KEY)
+    if (!raw) return
+    try {
+      const id = Date.now().toString(36) + Math.floor(Math.random() * 36).toString(36)
+      localStorage.setItem(slotKey(id), raw) // 原样搬迁
+      this.slots = [{ id, name: DEFAULT_SLOT_NAMES[0], createdAt: Date.now(), updatedAt: Date.now() }]
+      this.writeMeta()
+      localStorage.setItem(LEGACY_MIGRATED_KEY, '1')
+    } catch { /* 失败则保留旧存档原样，下次重试 */ }
+  }
+
+  private load(slotId: string): GameState {
+    try {
+      const raw = localStorage.getItem(slotKey(slotId))
       if (raw) {
         const parsed = JSON.parse(raw) as GameState
         const base = freshState()
@@ -160,6 +286,8 @@ class GameStore {
           labShopBought: { ...parsed.labShopBought },
           styleManuals: { ...base.styleManuals, ...parsed.styleManuals },
           unlockedAchievements: parsed.unlockedAchievements ?? [],
+          autoCraft: parsed.autoCraft ?? {},
+          autoCombat: parsed.autoCombat ?? null,
         }
       }
     } catch { /* ignore */ }
@@ -167,13 +295,90 @@ class GameStore {
   }
 
   save() {
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify(this.state)) } catch { /* ignore */ }
+    if (!this.activeSlotId) return // 未选槽不落盘
+    try {
+      localStorage.setItem(slotKey(this.activeSlotId), JSON.stringify(this.state))
+      const meta = this.slots.find(s => s.id === this.activeSlotId)
+      if (meta) {
+        meta.updatedAt = Date.now()
+        this.writeMeta()
+      }
+    } catch { /* ignore */ }
   }
 
   reset() {
     this.state = freshState()
     while (this.state.tasks.length < MAX_TASKS) this.state.tasks.push(rollTask(this.state.skills))
     this.save()
+    this.emit()
+  }
+
+  // ── 槽操作 ───────────────────────────────────────────────────────────────
+  listSlots(): SlotMeta[] { return this.slots }
+  /** 选槽页信息卡数据 */
+  slotDisplay(m: SlotMeta): { totalLevel: number; titleName: string; highestFloor: number; updatedAt: number } {
+    const st = this.load(m.id)
+    const tl = totalLevel(st)
+    return {
+      totalLevel: tl,
+      titleName: titleFor(tl).name,
+      highestFloor: st.highestFloor,
+      updatedAt: m.updatedAt,
+    }
+  }
+
+  /** 新建槽并进入 */
+  createSlot(name: string): string {
+    if (this.slots.length >= MAX_SLOTS) return ''
+    const id = Date.now().toString(36) + Math.floor(Math.random() * 36).toString(36)
+    const meta: SlotMeta = { id, name: name.trim() || DEFAULT_SLOT_NAMES[this.slots.length], createdAt: Date.now(), updatedAt: Date.now() }
+    this.slots.push(meta)
+    this.writeMeta()
+    this.enterSlot(id)
+    return id
+  }
+
+  /** 进入某个槽（加载其状态） */
+  enterSlot(id: string) {
+    if (!this.slots.some(s => s.id === id)) return
+    this.activeSlotId = id
+    this.state = this.load(id)
+    this.state.combatEvents = []
+    this.state.gatherEvents = []
+    this.state.levelUpEvents = []
+    while (this.state.tasks.length < MAX_TASKS) this.state.tasks.push(rollTask(this.state.skills))
+    this.state.playerHp = Math.min(this.state.playerHp, this.maxHp())
+    this.writeMeta()
+    this.emit()
+  }
+
+  /** 退出当前槽回选槽页 */
+  exitSlot() {
+    this.save()
+    this.activeSlotId = null
+    this.writeMeta()
+    this.emit()
+  }
+
+  /** 删除槽（防空、防删当前槽……由调用侧 confirm） */
+  deleteSlot(id: string) {
+    const idx = this.slots.findIndex(s => s.id === id)
+    if (idx < 0) return
+    try { localStorage.removeItem(slotKey(id)) } catch { /* ignore */ }
+    this.slots.splice(idx, 1)
+    if (this.activeSlotId === id) {
+      this.activeSlotId = null
+      this.state = freshState()
+    }
+    this.writeMeta()
+    this.emit()
+  }
+
+  renameSlot(id: string, name: string) {
+    const m = this.slots.find(s => s.id === id)
+    if (!m) return
+    m.name = name.trim() || m.name
+    this.writeMeta()
     this.emit()
   }
 
@@ -283,9 +488,11 @@ class GameStore {
       + (this.state.labShopBought.defInsight ?? 0) + ach.defFlat + amDef
     return Math.round(base * (Date.now() < this.state.defBuffUntil ? 1.25 : 1) * (1 + this.blessingTotals().defPct / 100) * (1 + this.gearTotals().defPct / 100))
   }
-  styleAbilityCount(style: StyleId) {
+  styleDamagePct(style: StyleId) {
     const lv = this.state.skills[style].level
-    return STYLES.find(s => s.id === style)!.abilities.filter(a => lv >= a.level).length
+    return STYLES.find(s => s.id === style)!.abilities
+      .filter(a => lv >= a.level)
+      .reduce((sum, a) => sum + (a.level >= 60 ? 10 : 5), 0)
   }
 
   // ── 成就 ───────────────────────────────────────────────────────────────────
@@ -321,6 +528,8 @@ class GameStore {
     if (this.state.active && dt > 1) {
       const action = ACTIONS.find(a => a.id === this.state.active!.actionId)
       if (action) this.runCycles(action, dt, true)
+      // 离线也自动制造（采集时间接驱动制造配方计时）
+      if (!this.state.battle) this.processAutoCraft(dt)
     }
     // 离线不结算战斗（避免回来时已阵亡），但回复生命
     this.state.battle = null
@@ -334,9 +543,20 @@ class GameStore {
     const dt = Math.min((nowMs - this.state.lastTick) / 1000, 5)
     this.state.lastTick = nowMs
 
+    // 每日悬赏：跨天自动重置
+    const today = todayStr()
+    if (!this.state.daily || this.state.daily.date !== today) {
+      this.state.daily = { date: today, quests: rollDaily(this.state.skills) }
+    }
+
     if (this.state.active) {
       const action = ACTIONS.find(a => a.id === this.state.active!.actionId)
       if (action) this.runCycles(action, dt, false)
+    }
+
+    // 自动制造：采集时并行消耗材料进行制造，打通采集→制造链条
+    if (this.state.active && !this.state.battle) {
+      this.processAutoCraft(dt)
     }
 
     if (this.state.battle) {
@@ -348,6 +568,17 @@ class GameStore {
     } else if (this.state.playerHp < this.maxHp()) {
       this.state.playerHp = Math.min(this.maxHp(), this.state.playerHp + this.maxHp() * 0.02 * dt)
     }
+
+    // 自动战斗：闲置时自动打怪，自动装备/吃药/续战
+    if (this.state.autoCombat && !this.state.active && !this.state.battle) {
+      this.processAutoCombat()
+    }
+
+    // 清理过期动画事件（3 秒前）
+    const cutoff = Date.now() - 3000
+    this.state.combatEvents = this.state.combatEvents.filter(e => e.time > cutoff)
+    this.state.gatherEvents = this.state.gatherEvents.filter(e => e.time > cutoff)
+    this.state.levelUpEvents = this.state.levelUpEvents.filter(e => e.time > cutoff)
 
     this.checkAchievements()
     this.emit()
@@ -370,6 +601,7 @@ class GameStore {
   }
 
   private completeCycle(action: ActionDef) {
+    const actionId = action.id
     if (action.inputs) for (const inp of action.inputs) {
       this.state.inventory[inp.item] = (this.state.inventory[inp.item] ?? 0) - inp.count
     }
@@ -383,13 +615,203 @@ class GameStore {
         }
       }
     }
+    // 每日悬赏：采集/制造类按动作 id 计数
+    if (this.state.daily) {
+      for (const q of this.state.daily.quests) {
+        if (!q.claimed && q.progress < q.count && q.actionId === actionId) {
+          q.progress = Math.min(q.count, q.progress + 1)
+        }
+      }
+    }
     this.gainXp(action.skill, action.xp)
+    // 采集动画事件：通知 UI 展示浮动物品
+    for (const out of action.outputs) {
+      if (out.chance !== undefined) continue // 跳过概率产出
+      this.state.gatherEvents.push({ type: 'item', item: out.item, count: out.count, time: Date.now() })
+    }
+  }
+
+  // ── 自动制造 ─────────────────────────────────────────────────────────────
+  // 采集时后台并行消耗材料进行制造，打通采集→制造链条
+  private findBestRecipe(skill: SkillId): ActionDef | null {
+    const recipes = ACTIONS.filter(a => a.skill === skill && a.inputs && a.inputs.length > 0)
+    if (recipes.length === 0) return null
+    const skillLevel = this.state.skills[skill].level
+    // 选最高等级的可制造配方（已解锁 + 材料充足），自动适配材料变化
+    const unlocked = recipes.filter(a => a.levelReq <= skillLevel)
+    const affordable = unlocked.filter(a => this.canAfford(a.inputs!))
+    if (affordable.length > 0) {
+      return affordable.reduce((best, a) => a.levelReq > best.levelReq ? a : best, affordable[0])
+    }
+    return null
+  }
+
+  toggleAutoCraft(skill: SkillId) {
+    if (this.state.autoCraft[skill]) {
+      this.state.autoCraft[skill] = null
+      this.setNotice(`${SKILLS.find(s => s.id === skill)!.name} 自动制造已关闭`)
+    } else {
+      const recipe = this.findBestRecipe(skill)
+      this.state.autoCraft[skill] = { actionId: recipe?.id ?? '', elapsed: 0 }
+      this.setNotice(`${SKILLS.find(s => s.id === skill)!.name} 自动制造已开启${recipe ? ` → ${recipe.name}` : '（暂无可用配方）'}`)
+    }
+    this.emit()
+  }
+
+  private processAutoCraft(dt: number) {
+    const craftSkills: SkillId[] = ['alchemy', 'smithing', 'cooking', 'tailoring', 'enhancing']
+    for (const skill of craftSkills) {
+      const ac = this.state.autoCraft[skill]
+      if (!ac) continue
+      // 每次 tick 重新评估最佳配方（材料可能刚被采集产出）
+      const recipe = this.findBestRecipe(skill)
+      if (!recipe) { ac.actionId = ''; ac.elapsed = 0; continue }
+      ac.actionId = recipe.id
+      ac.elapsed += dt
+      while (ac.elapsed >= recipe.timeSec) {
+        ac.elapsed -= recipe.timeSec
+        if (!this.canAfford(recipe.inputs!)) { ac.elapsed = 0; break }
+        this.completeCycle(recipe)
+        // 重新评估配方（材料变了，可能触发更高阶配方）
+        const next = this.findBestRecipe(skill)
+        if (!next) { ac.actionId = ''; ac.elapsed = 0; break }
+        ac.actionId = next.id
+      }
+    }
+  }
+
+  // ── 自动战斗 ─────────────────────────────────────────────────────────────
+  // 闲置时自动打怪：自动装备/吃药/续战，打通制造→战斗链条
+  toggleAutoCombat(monsterId: string, style: StyleId) {
+    if (this.state.autoCombat?.monsterId === monsterId && this.state.autoCombat?.style === style) {
+      this.state.autoCombat = null
+      // 2026-09-13 修复:关闭自动战斗时同时撤下进行中的战斗(原行为:仅清标志,战斗继续)
+      if (this.state.battle) this.stopBattle()
+      this.setNotice('自动战斗已关闭,已撤离战斗')
+    } else {
+      const m = MONSTERS.find(x => x.id === monsterId)
+      if (!m) return
+      this.state.autoCombat = { monsterId, style }
+      this.setNotice(`自动战斗已开启 → ${m.icon} ${m.name}`)
+    }
+    this.emit()
+  }
+
+  private processAutoCombat() {
+    const ac = this.state.autoCombat
+    if (!ac) return
+    // 1) 自动装备最优武器、防具、饰品
+    this.autoEquipBest()
+    // 2) 自动使用 Buff（大力丸/铁布衫丹）
+    this.autoBuff()
+    // 3) 血量过低 → 自动吃最好的回血物品
+    const hpPct = this.state.playerHp / this.maxHp()
+    if (hpPct < 0.25) {
+      this.autoHeal()
+      return // 吃完药等下个 tick 再判断
+    }
+    // 4) 血量足够 → 开战
+    if (hpPct >= 0.4) {
+      const m = MONSTERS.find(x => x.id === ac.monsterId)
+      if (!m) return
+      if (this.state.skills[ac.style].level >= m.levelReq) {
+        this.startBattle(ac.monsterId, ac.style)
+      }
+    }
+  }
+
+  private autoEquipBest() {
+    // 武器：找背包里 ATK 最高的
+    let bestWeapon: string | null = null
+    let bestAtk = 0
+    const curAtk = this.state.equipment.weapon ? (ITEMS[this.state.equipment.weapon.item].atk ?? 0) + this.state.equipment.weapon.plus * 2 : 0
+    for (const [id, n] of Object.entries(this.state.inventory)) {
+      if (n <= 0) continue
+      const def = ITEMS[id]
+      if (def?.category === 'weapon' && (def.atk ?? 0) > bestAtk) {
+        bestAtk = def.atk ?? 0
+        bestWeapon = id
+      }
+    }
+    if (bestWeapon && bestAtk > curAtk) {
+      if (this.state.equipment.weapon) this.addItem(this.state.equipment.weapon.item, 1)
+      this.state.inventory[bestWeapon] -= 1
+      this.state.equipment.weapon = { item: bestWeapon, plus: 0, affixes: rollAffixes(), fractures: 0 }
+    }
+    // 防具：找背包里 DEF 最高的
+    let bestArmor: string | null = null
+    let bestDef = 0
+    const curDef = this.state.equipment.armor ? (ITEMS[this.state.equipment.armor.item].def ?? 0) + this.state.equipment.armor.plus * 1 : 0
+    for (const [id, n] of Object.entries(this.state.inventory)) {
+      if (n <= 0) continue
+      const def = ITEMS[id]
+      if (def?.category === 'armor' && (def.def ?? 0) > bestDef) {
+        bestDef = def.def ?? 0
+        bestArmor = id
+      }
+    }
+    if (bestArmor && bestDef > curDef) {
+      if (this.state.equipment.armor) this.addItem(this.state.equipment.armor.item, 1)
+      this.state.inventory[bestArmor] -= 1
+      this.state.equipment.armor = { item: bestArmor, plus: 0, affixes: rollAffixes(), fractures: 0 }
+    }
+    // 饰品：找背包里最好的（优先经验加成 > ATK > DEF > 铜钱）
+    let bestAmulet: string | null = null
+    let bestAmuletScore = 0
+    const curAmulet = this.state.equipment.amulet
+    const curAmuletId = curAmulet?.item
+    for (const [id, n] of Object.entries(this.state.inventory)) {
+      if (n <= 0 || id === curAmuletId) continue
+      const def = ITEMS[id]
+      if (def?.category !== 'amulet') continue
+      const score = (def.xpPct ?? 0) * 10 + (def.atk ?? 0) * 2 + (def.def ?? 0) * 2 + (def.coinPct ?? 0)
+      if (score > bestAmuletScore) { bestAmuletScore = score; bestAmulet = id }
+    }
+    if (bestAmulet) {
+      if (curAmulet) this.addItem(curAmulet.item, 1)
+      this.state.inventory[bestAmulet] -= 1
+      this.state.equipment.amulet = { item: bestAmulet, plus: 0, affixes: rollAffixes(), fractures: 0 }
+    }
+  }
+
+  private autoBuff() {
+    const nowMs = Date.now()
+    if (nowMs >= this.state.atkBuffUntil && (this.state.inventory.daliwan ?? 0) > 0) {
+      this.state.inventory.daliwan -= 1
+      this.state.atkBuffUntil = nowMs + 5 * 60 * 1000
+    }
+    if (nowMs >= this.state.defBuffUntil && (this.state.inventory.tiebushan ?? 0) > 0) {
+      this.state.inventory.tiebushan -= 1
+      this.state.defBuffUntil = nowMs + 5 * 60 * 1000
+    }
+  }
+
+  private autoHeal() {
+    // 找背包里最好的回血物品（食物/丹药），优先用小回复避免浪费大药
+    const healingItems = Object.entries(this.state.inventory)
+      .filter(([id, n]) => n > 0 && ITEMS[id]?.heal)
+      .sort((a, b) => (ITEMS[a[0]].heal === -1 ? 99999 : ITEMS[a[0]].heal ?? 0) - (ITEMS[b[0]].heal === -1 ? 99999 : ITEMS[b[0]].heal ?? 0))
+    if (healingItems.length === 0) return
+    const deficit = this.maxHp() - this.state.playerHp
+    // 选刚好够恢复的，别浪费
+    let pick = healingItems[0][0]
+    for (const [id] of healingItems) {
+      const h = ITEMS[id].heal ?? 0
+      if (h >= deficit || h === -1) { pick = id; break }
+    }
+    this.state.inventory[pick] -= 1
+    const h = ITEMS[pick].heal ?? 0
+    this.state.playerHp = h === -1 ? this.maxHp() : Math.min(this.maxHp(), this.state.playerHp + h)
   }
 
   // ── 战斗 ───────────────────────────────────────────────────────────────────
   startBattle(monsterId: string, style: StyleId) {
     const m = MONSTERS.find(x => x.id === monsterId)
     if (!m) return
+    if (this.state.skills[style].level < m.levelReq) {
+      this.setNotice(`${m.name} 需要 ${STYLES.find(x => x.id === style)?.name} Lv.${m.levelReq}`)
+      return
+    }
     if (this.state.playerHp <= this.maxHp() * 0.2) {
       this.setNotice('伤势过重，先打坐回气吧')
       return
@@ -422,13 +844,18 @@ class GameStore {
     const m = battleMonster(b)
     const bt = b.labFloor != null ? this.blessingTotals() : null
     const gt = this.gearTotals()
+    // 流派克制：对应弱点流派 +18% 伤害（秘境怪无克制）
+    const weakStyle = b.labFloor == null ? (MONSTERS.find(x => x.id === b.monsterId)?.weak ?? null) : null
+    const weakBonus = weakStyle === b.style ? 1.18 : 1
     // 玩家攻击：基础伤害
     let pierce = b.style === 'sword' && this.state.skills.sword.level >= 15 ? 0.3 : 0
     pierce = Math.min(0.9, pierce + gt.pierce / 100 + (bt ? bt.pierce / 100 : 0))
     let dmg = Math.max(1, (this.playerAtk() - m.def * 0.6 * (1 - pierce)))
-    // 招式加成：每解锁一个 +5%；秘籍每层 +3%
-    dmg *= 1 + 0.05 * this.styleAbilityCount(b.style)
+    // 招式加成：前四招各 +5%，Lv.60/Lv.75 绝学各 +10%；秘籍每层 +3%
+    dmg *= 1 + this.styleDamagePct(b.style) / 100
     dmg *= 1 + 0.03 * (this.state.styleManuals[b.style] ?? 0)
+    // 流派克制乘区：弱点流派 +18%
+    if (weakBonus > 1) dmg *= weakBonus
     // 暗器：首回合 +25%
     if (b.style === 'hidden' && b.firstHit) dmg *= 1.25
     // 暴击：剑法 10%，词缀/秘境祝福可叠加任意流派
@@ -437,9 +864,12 @@ class GameStore {
     if (crit) dmg *= 1.8
     dmg = Math.max(1, Math.round(dmg * (0.85 + Math.random() * 0.3)))
     b.monsterHp -= dmg
+    // 战斗动画事件
+    this.state.combatEvents.push({ type: crit ? 'crit' : 'dmg', value: dmg, time: Date.now() })
     // 拳掌：15% 连击
     if (b.style === 'fist' && Math.random() < 0.15 && b.monsterHp > 0) {
       b.monsterHp -= dmg
+      this.state.combatEvents.push({ type: 'dmg', value: dmg, time: Date.now() })
     }
     // 内功：回复 8% 伤害的生命
     if (b.style === 'inner') {
@@ -452,6 +882,7 @@ class GameStore {
     }
     b.firstHit = false
     if (b.monsterHp <= 0) {
+      this.state.combatEvents.push({ type: 'kill', value: 0, time: Date.now() })
       if (b.labFloor != null) {
         this.onLabKill(b)
         return
@@ -466,6 +897,7 @@ class GameStore {
     if (bt && bt.dodge > 0 && Math.random() < bt.dodge / 100) return
     const mdmg = Math.max(0, Math.round((m.atk - this.playerDef()) * (0.85 + Math.random() * 0.3)))
     this.state.playerHp -= mdmg
+    this.state.combatEvents.push({ type: 'monsterDmg', value: mdmg, time: Date.now() })
     if (this.state.playerHp <= 0) {
       this.state.playerHp = 0
       this.state.battle = null
@@ -478,15 +910,27 @@ class GameStore {
     const m = MONSTERS.find(x => x.id === monsterId)
     if (!m) return
     this.state.kills++
+    // 每日悬赏：击杀类按怪物 id 计数
+    if (this.state.daily) {
+      for (const q of this.state.daily.quests) {
+        if (!q.claimed && q.progress < q.count && q.actionId === monsterId) {
+          q.progress = Math.min(q.count, q.progress + 1)
+        }
+      }
+    }
+    const drops: { item: string; count: number; time: number }[] = []
     for (const d of m.drops) {
       if (Math.random() > d.chance) continue
       let n = d.min + Math.floor(Math.random() * (d.max - d.min + 1))
       if (d.item === 'coin') n = Math.floor(n * this.coinMult())
       this.addItem(d.item, n)
+      drops.push({ item: d.item, count: n, time: Date.now() })
       for (const t of this.state.tasks) {
         if (t.item === d.item && t.progress < t.count) t.progress = Math.min(t.count, t.progress + n)
       }
     }
+    // 掉落事件：UI 播放战利品飞出特效
+    for (const dp of drops) this.state.combatEvents.push({ type: 'drop', value: dp.count, item: dp.item, time: dp.time })
     const base = m.hp / 4
     this.gainXp(style, base * 0.4)
     this.gainXp('attack', base * 0.3)
@@ -500,9 +944,16 @@ class GameStore {
     const bt = this.blessingTotals()
     this.state.kills++
     // 奖励：铜钱 + 秘境币（boss 层 ×3），boss 层 50% 掉宝箱；祝福可加成
+    const t = Date.now()
     this.addItem('coin', Math.floor((20 + floor * 8) * this.coinMult() * (1 + bt.coinPct / 100)))
     this.addItem('labCoin', Math.floor(labCoinReward(floor) * (1 + bt.labCoinPct / 100)))
-    if (floor % 5 === 0 && Math.random() < 0.5) this.addItem('chest', 1)
+    // 掉落事件：秘境掉落也走战利品动画
+    this.state.combatEvents.push({ type: 'drop', value: Math.floor((20 + floor * 8) * this.coinMult() * (1 + bt.coinPct / 100)), item: 'coin', time: t })
+    this.state.combatEvents.push({ type: 'drop', value: Math.floor(labCoinReward(floor) * (1 + bt.labCoinPct / 100)), item: 'labCoin', time: t })
+    if (floor % 5 === 0 && Math.random() < 0.5) {
+      this.addItem('chest', 1)
+      this.state.combatEvents.push({ type: 'drop', value: 1, item: 'chest', time: t })
+    }
     const base = (m.hp / 4) * (1 + bt.xpPct / 100)
     this.gainXp(b.style, base * 0.4)
     this.gainXp('attack', base * 0.3)
@@ -588,6 +1039,7 @@ class GameStore {
       kills: this.state.kills,
       crafted: this.state.crafted,
       highestFloor: this.state.highestFloor,
+      labShopBought: this.state.labShopBought,
       lifetimeTaskPoints: this.state.lifetimeTaskPoints,
       chat: this.state.chat,
     }
@@ -605,6 +1057,9 @@ class GameStore {
     while (s.xp >= xpToNext(s.level)) {
       s.xp -= xpToNext(s.level)
       s.level++
+      // 升级庆祝事件：UI 据此播放闪光/飘字
+      this.state.levelUpEvents.push({ skill, level: s.level, time: Date.now() })
+      this.setNotice(`✨ ${SKILLS.find(x => x.id === skill)?.name} 提升至 Lv.${s.level}！`)
     }
   }
 
@@ -857,6 +1312,19 @@ class GameStore {
     this.emit()
   }
 
+  // ── 每日悬赏领取 ─────────────────────────────────────────────
+  claimDaily(index: number) {
+    const daily = this.state.daily
+    if (!daily) return
+    const q = daily.quests[index]
+    if (!q || q.claimed || q.progress < q.count) return
+    q.claimed = true
+    this.addItem('coin', Math.floor(q.rewardCoins * this.coinMult()))
+    if (q.rewardTokens > 0) this.addItem('token', q.rewardTokens)
+    this.setNotice(`🎯 悬赏达成！🪙${Math.floor(q.rewardCoins * this.coinMult())}${q.rewardTokens > 0 ? ' 🎫×' + q.rewardTokens : ''}`)
+    this.emit()
+  }
+
   sendChat(channel: string, user: string, text: string) {
     this.state.chat = [...this.state.chat.slice(-80), { channel, user, text, time: now() }]
     this.emit()
@@ -872,6 +1340,12 @@ export function useGame(): GameState {
   return useSyncExternalStore(game.subscribe, game.getSnapshot)
 }
 
+/** 当前激活槽的名字（用于界面各处显示主角名） */
+export function currentSlotName(): string {
+  if (!game.activeSlotId) return 'xbei'
+  return game.slots.find(s => s.id === game.activeSlotId)?.name || 'xbei'
+}
+
 export const totalLevel = (s: GameState) =>
   Object.values(s.skills).reduce((sum, sk) => sum + sk.level, 0)
 
@@ -880,3 +1354,73 @@ export const marketValue = (s: GameState) =>
     const def = ITEMS[id]
     return sum + (def && def.category !== 'currency' ? def.price * n : 0)
   }, 0)
+
+// ─── 玩家战力分 ───────────────────────────────────────────────
+export function playerPower(s: GameState): number {
+  const atk = 5 + 2 * s.skills.attack.level + (s.equipment.weapon ? (ITEMS[s.equipment.weapon.item].atk ?? 0) + s.equipment.weapon.plus * 2 : 0)
+  const hp = 50 + 15 * s.skills.hp.level + 15 * (s.labShopBought.hpInsight ?? 0)
+  return Math.round(atk * 2 + hp)
+}
+
+// ─── 下一步建议（首页智能引导）───────────────────────────────────────────────
+export interface Guide { icon: string; text: string; to: { type: string; [k: string]: unknown } }
+
+export function nextGuides(s: GameState): Guide[] {
+  const out: Guide[] = []
+  // 1) 采集线：当前技能距离下一档动作还差几级
+  const gatherSkills: SkillId[] = ['herbalism', 'mining', 'woodcutting', 'hunting', 'fishing']
+  for (const g of gatherSkills) {
+    const lv = s.skills[g].level
+    const next = ACTIONS.filter(a => a.skill === g && a.levelReq > lv).sort((a, b) => a.levelReq - b.levelReq)[0]
+    if (next && next.levelReq - lv <= 3) {
+      out.push({
+        icon: '⛏️', text: `${SKILLS.find(x => x.id === g)!.name} Lv.${lv} → ${next.levelReq} 解锁「${next.name}」`,
+        to: { type: 'skill', skill: g },
+      })
+      break
+    }
+  }
+  // 2) 秘境：饰品可入手但币不够 → 提示爬塔
+  const pendingAmulet = LAB_SHOP.find(x => x.amulet && !(s.labShopBought[x.id] ?? 0))
+  if (pendingAmulet) {
+    const bought = s.labShopBought[pendingAmulet.id] ?? 0
+    const cost = pendingAmulet.growth > 0
+      ? Math.floor(pendingAmulet.baseCost * Math.pow(pendingAmulet.growth, bought))
+      : pendingAmulet.baseCost
+    if (cost > (s.inventory.labCoin ?? 0)) {
+      out.push({
+        icon: '🌀', text: `秘境币还差 ${cost - (s.inventory.labCoin ?? 0)} → 可换「${pendingAmulet.name}」`,
+        to: { type: 'lab' },
+      })
+    }
+  }
+  // 3) 锻造线：临近高级武器配方（相差 ≤2 级）
+  const smithLv = s.skills.smithing.level
+  const nextWeapon = ACTIONS.filter(a => a.skill === 'smithing' && a.outputs.some(o => ITEMS[o.item]?.category === 'weapon') && a.levelReq > smithLv)
+    .sort((a, b) => a.levelReq - b.levelReq)[0]
+  if (nextWeapon && nextWeapon.levelReq - smithLv <= 2) {
+    out.push({
+      icon: '🔨', text: `锻造 Lv.${smithLv} → ${nextWeapon.levelReq} 可铸「${nextWeapon.name}」`,
+      to: { type: 'skill', skill: 'smithing' },
+    })
+  }
+  // 4) 轮回准备
+  const tl = totalLevel(s)
+  if (tl >= REBIRTH_REQ_LEVEL - 30 && tl < REBIRTH_REQ_LEVEL) {
+    out.push({
+      icon: '♾️', text: `总等级 ${tl}/${REBIRTH_REQ_LEVEL} → 轮回可获得 ${rebirthPointsGain(Math.max(tl, 300))} 轮回点`,
+      to: { type: 'combat' },
+    })
+  }
+  // 5) 总兜底：打当前最高怪练级
+  if (out.length === 0) {
+    const readable = MONSTERS.filter(m => s.skills.attack.level >= m.levelReq).slice(-1)[0]
+    if (readable) {
+      out.push({
+        icon: '⚔️', text: `已有实力挑战「${readable.name}」，去江湖练练手吧`,
+        to: { type: 'combat' },
+      })
+    }
+  }
+  return out.slice(0, 3)
+}

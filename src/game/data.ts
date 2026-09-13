@@ -10,26 +10,27 @@ export interface SkillDef {
   name: string
   icon: string
   group: 'gather' | 'craft' | 'combat'
+  desc: string // 一句用途说明，展示在技能页标题下
 }
 
 export const SKILLS: SkillDef[] = [
-  { id: 'herbalism', name: '采药', icon: '🌿', group: 'gather' },
-  { id: 'mining', name: '采矿', icon: '⛏️', group: 'gather' },
-  { id: 'woodcutting', name: '伐木', icon: '🪓', group: 'gather' },
-  { id: 'hunting', name: '打猎', icon: '🏹', group: 'gather' },
-  { id: 'fishing', name: '钓鱼', icon: '🎣', group: 'gather' },
-  { id: 'alchemy', name: '炼丹', icon: '⚗️', group: 'craft' },
-  { id: 'smithing', name: '锻造', icon: '🔨', group: 'craft' },
-  { id: 'cooking', name: '烹饪', icon: '🍳', group: 'craft' },
-  { id: 'tailoring', name: '制衣', icon: '🧵', group: 'craft' },
-  { id: 'enhancing', name: '强化', icon: '✨', group: 'craft' },
-  { id: 'hp', name: '气血', icon: '❤️', group: 'combat' },
-  { id: 'attack', name: '攻击', icon: '⚔️', group: 'combat' },
-  { id: 'defense', name: '防御', icon: '🛡️', group: 'combat' },
-  { id: 'sword', name: '剑法', icon: '🗡️', group: 'combat' },
-  { id: 'fist', name: '拳掌', icon: '👊', group: 'combat' },
-  { id: 'hidden', name: '暗器', icon: '🔪', group: 'combat' },
-  { id: 'inner', name: '内功', icon: '🌀', group: 'combat' },
+  { id: 'herbalism', name: '采药', icon: '🌿', group: 'gather', desc: '采集草药，是炼丹与炼化方的原料来源' },
+  { id: 'mining', name: '采矿', icon: '⛏️', group: 'gather', desc: '开采矿石，供锻造炼锭、打造兵器防具' },
+  { id: 'woodcutting', name: '伐木', icon: '🪓', group: 'gather', desc: '砍伐木材，锻造兵器与制衣所需的辅料' },
+  { id: 'hunting', name: '打猎', icon: '🏹', group: 'gather', desc: '狩猎野兽得肉与兽皮兽骨，供烹饪、制衣与炼丹' },
+  { id: 'fishing', name: '钓鱼', icon: '🎣', group: 'gather', desc: '垂钓水产，烹饪的原料，偶有珍宝沉箱出水' },
+  { id: 'alchemy', name: '炼丹', icon: '⚗️', group: 'craft', desc: '将药材炼成回血丹药、增益丹药，兼可将低级材料炼化为高级' },
+  { id: 'smithing', name: '锻造', icon: '🔨', group: 'craft', desc: '炼矿石为锭、打锭与木材为兵器，是装备的最主要来源' },
+  { id: 'cooking', name: '烹饪', icon: '🍳', group: 'craft', desc: '以猎物、鲜鱼烹制美食，食用回血，平替丹药' },
+  { id: 'tailoring', name: '制衣', icon: '🧵', group: 'craft', desc: '以兽皮为主料缝制防具，护身减伤' },
+  { id: 'enhancing', name: '强化', icon: '✨', group: 'craft', desc: '制作强化石，为已装备的兵器防具强化提升属性（上限 +20）' },
+  { id: 'hp', name: '气血', icon: '❤️', group: 'combat', desc: '提升气血上限，等级越高越耐打（战斗时随击杀成长）' },
+  { id: 'attack', name: '攻击', icon: '⚔️', group: 'combat', desc: '提升攻击力，直接增加伤害（战斗时随击杀成长）' },
+  { id: 'defense', name: '防御', icon: '🛡️', group: 'combat', desc: '提升防御力，减少受击伤害（战斗时随击杀成长）' },
+  { id: 'sword', name: '剑法', icon: '🗡️', group: 'combat', desc: '10% 暴击 ×1.8 倍伤害；克制弱剑的怪物 +18%' },
+  { id: 'fist', name: '拳掌', icon: '👊', group: 'combat', desc: '15% 追加连击；克制弱拳的怪物 +18%' },
+  { id: 'hidden', name: '暗器', icon: '🔪', group: 'combat', desc: '每只怪首回合伤害 +25%；克制弱暗器的怪物 +18%' },
+  { id: 'inner', name: '内功', icon: '🌀', group: 'combat', desc: '回复伤害 8% 的血量，越战越勇；克制弱内功的怪物 +18%' },
 ]
 
 export type ItemCategory = 'currency' | 'material' | 'food' | 'pill' | 'weapon' | 'armor' | 'amulet' | 'stone' | 'manual' | 'special'
@@ -442,6 +443,27 @@ export const ACTIONS: ActionDef[] = [
 
 export const actionsBySkill = (skill: SkillId) => ACTIONS.filter(a => a.skill === skill)
 
+/** 材料来源引导：查产出该物品的主要动作（排除进阶/炼化等副作用配方） */
+export function itemSource(itemId: string): { skill: SkillId; name: string } | null {
+  const a = ACTIONS.find(x =>
+    x.outputs.some(o => o.item === itemId && (o.chance === undefined || o.chance >= 0.5)) &&
+    !x.id.startsWith('up') && !x.id.startsWith('trans')
+  )
+  if (!a) return null
+  return { skill: a.skill, name: a.name }
+}
+
+/** 物品用途：该物品被哪些配方消耗，各产出什么（背包悬停展示"拿来干嘛"） */
+export function itemUsage(itemId: string): { recipe: string; skill: SkillId; outputs: string }[] {
+  const out: { recipe: string; skill: SkillId; outputs: string }[] = []
+  for (const a of ACTIONS) {
+    if (!a.inputs?.some(i => i.item === itemId)) continue
+    const outs = a.outputs.map(o => `${ITEMS[o.item]?.icon ?? '❓'}${ITEMS[o.item]?.name ?? o.item}×${o.count}${o.chance !== undefined ? `(${Math.round(o.chance * 100)}%)` : ''}`).join(' ')
+    out.push({ recipe: a.name, skill: a.skill, outputs: outs })
+  }
+  return out
+}
+
 // v4 经验曲线：25 × L^1.95（内容消耗目标 2–3 个月）
 export const xpToNext = (level: number) => Math.floor(25 * Math.pow(level, 1.95))
 
@@ -455,22 +477,23 @@ export interface MonsterDef {
   hp: number
   atk: number
   def: number
+  weak?: StyleId  // 流派克制：使用该流派出战伤害 +18%
   drops: { item: string; min: number; max: number; chance: number }[]
 }
 
 export const MONSTERS: MonsterDef[] = [
-  { id: 'rabbitJing', zone: '野猪林', name: '野兔精', icon: '🐰', levelReq: 1, hp: 30, atk: 4, def: 0, drops: [{ item: 'coin', min: 5, max: 15, chance: 1 }, { item: 'rabbitMeat', min: 1, max: 1, chance: 0.4 }] },
-  { id: 'boarKing', zone: '野猪林', name: '野猪王', icon: '🐗', levelReq: 5, hp: 65, atk: 9, def: 2, drops: [{ item: 'coin', min: 12, max: 30, chance: 1 }, { item: 'boarMeat', min: 1, max: 1, chance: 0.5 }, { item: 'hide', min: 1, max: 1, chance: 0.3 }] },
-  { id: 'bandit', zone: '黑风寨', name: '山贼', icon: '🥷', levelReq: 10, hp: 130, atk: 15, def: 4, drops: [{ item: 'coin', min: 30, max: 70, chance: 1 }, { item: 'gancao', min: 2, max: 2, chance: 0.4 }, { item: 'stone', min: 1, max: 1, chance: 0.15 }] },
-  { id: 'banditBoss', zone: '黑风寨', name: '山贼头目', icon: '🦹', levelReq: 15, hp: 240, atk: 21, def: 6, drops: [{ item: 'coin', min: 70, max: 150, chance: 1 }, { item: 'ironSword', min: 1, max: 1, chance: 0.1 }, { item: 'lingzhi', min: 1, max: 1, chance: 0.4 }, { item: 'swordManual', min: 1, max: 1, chance: 0.08 }] },
-  { id: 'corpse', zone: '古墓', name: '尸兵', icon: '🧟', levelReq: 20, hp: 320, atk: 27, def: 10, drops: [{ item: 'coin', min: 100, max: 220, chance: 1 }, { item: 'iron', min: 2, max: 2, chance: 0.4 }, { item: 'steelBlade', min: 1, max: 1, chance: 0.08 }] },
-  { id: 'tombGuard', zone: '古墓', name: '古墓护法', icon: '👹', levelReq: 28, hp: 520, atk: 36, def: 14, drops: [{ item: 'coin', min: 200, max: 400, chance: 1 }, { item: 'xuelian', min: 1, max: 1, chance: 0.4 }, { item: 'fineStone', min: 1, max: 1, chance: 0.2 }, { item: 'fistManual', min: 1, max: 1, chance: 0.08 }] },
-  { id: 'swordGhost', zone: '缥缈峰', name: '剑客幻影', icon: '👤', levelReq: 35, hp: 850, atk: 47, def: 20, drops: [{ item: 'coin', min: 400, max: 800, chance: 1 }, { item: 'xuantie', min: 1, max: 1, chance: 0.4 }, { item: 'xuantieSword', min: 1, max: 1, chance: 0.05 }] },
-  { id: 'wulinGod', zone: '缥缈峰', name: '武林神话', icon: '🐲', levelReq: 45, hp: 1600, atk: 62, def: 28, drops: [{ item: 'coin', min: 1000, max: 2000, chance: 1 }, { item: 'renshen', min: 1, max: 1, chance: 0.3 }, { item: 'jiuzhuan', min: 1, max: 1, chance: 0.1 }, { item: 'hiddenManual', min: 1, max: 1, chance: 0.08 }] },
-  { id: 'fireLizard', zone: '熔岩洞', name: '火蜥蜴', icon: '🦎', levelReq: 48, hp: 2200, atk: 78, def: 36, drops: [{ item: 'coin', min: 1500, max: 3000, chance: 1 }, { item: 'coldIron', min: 1, max: 1, chance: 0.4 }, { item: 'qiankunCrystal', min: 1, max: 1, chance: 0.12 }] },
-  { id: 'lavaBeast', zone: '熔岩洞', name: '熔岩巨兽', icon: '🌋', levelReq: 56, hp: 3400, atk: 95, def: 45, drops: [{ item: 'coin', min: 2500, max: 5000, chance: 1 }, { item: 'neidan', min: 1, max: 1, chance: 0.35 }, { item: 'dragonSword', min: 1, max: 1, chance: 0.04 }, { item: 'innerManual', min: 1, max: 1, chance: 0.08 }] },
-  { id: 'skySoldier', zone: '九霄云巅', name: '天兵幻影', icon: '⚡', levelReq: 62, hp: 5000, atk: 115, def: 55, drops: [{ item: 'coin', min: 4000, max: 8000, chance: 1 }, { item: 'godIron', min: 1, max: 1, chance: 0.35 }, { item: 'xuanwuArmor', min: 1, max: 1, chance: 0.04 }] },
-  { id: 'skyEmperor', zone: '九霄云巅', name: '九霄帝君', icon: '🌩️', levelReq: 70, hp: 8000, atk: 140, def: 68, drops: [{ item: 'coin', min: 8000, max: 15000, chance: 1 }, { item: 'jiuyeLingzhi', min: 1, max: 1, chance: 0.3 }, { item: 'xuanyuanSword', min: 1, max: 1, chance: 0.03 }] },
+  { id: 'rabbitJing', zone: '野猪林', name: '野兔精', icon: '🐰', levelReq: 1, hp: 30, atk: 4, def: 0, weak: 'hidden', drops: [{ item: 'coin', min: 5, max: 15, chance: 1 }, { item: 'rabbitMeat', min: 1, max: 1, chance: 0.4 }] },
+  { id: 'boarKing', zone: '野猪林', name: '野猪王', icon: '🐗', levelReq: 5, hp: 65, atk: 9, def: 2, weak: 'fist', drops: [{ item: 'coin', min: 12, max: 30, chance: 1 }, { item: 'boarMeat', min: 1, max: 1, chance: 0.5 }, { item: 'hide', min: 1, max: 1, chance: 0.3 }] },
+  { id: 'bandit', zone: '黑风寨', name: '山贼', icon: '🥷', levelReq: 10, hp: 130, atk: 15, def: 4, weak: 'sword', drops: [{ item: 'coin', min: 30, max: 70, chance: 1 }, { item: 'gancao', min: 2, max: 2, chance: 0.4 }, { item: 'stone', min: 1, max: 1, chance: 0.15 }] },
+  { id: 'banditBoss', zone: '黑风寨', name: '山贼头目', icon: '🦹', levelReq: 15, hp: 240, atk: 21, def: 6, weak: 'fist', drops: [{ item: 'coin', min: 70, max: 150, chance: 1 }, { item: 'ironSword', min: 1, max: 1, chance: 0.1 }, { item: 'lingzhi', min: 1, max: 1, chance: 0.4 }, { item: 'swordManual', min: 1, max: 1, chance: 0.08 }] },
+  { id: 'corpse', zone: '古墓', name: '尸兵', icon: '🧟', levelReq: 20, hp: 320, atk: 27, def: 10, weak: 'sword', drops: [{ item: 'coin', min: 100, max: 220, chance: 1 }, { item: 'iron', min: 2, max: 2, chance: 0.4 }, { item: 'steelBlade', min: 1, max: 1, chance: 0.08 }] },
+  { id: 'tombGuard', zone: '古墓', name: '古墓护法', icon: '👹', levelReq: 28, hp: 520, atk: 36, def: 14, weak: 'inner', drops: [{ item: 'coin', min: 200, max: 400, chance: 1 }, { item: 'xuelian', min: 1, max: 1, chance: 0.4 }, { item: 'fineStone', min: 1, max: 1, chance: 0.2 }, { item: 'fistManual', min: 1, max: 1, chance: 0.08 }] },
+  { id: 'swordGhost', zone: '缥缈峰', name: '剑客幻影', icon: '👤', levelReq: 35, hp: 850, atk: 47, def: 20, weak: 'inner', drops: [{ item: 'coin', min: 400, max: 800, chance: 1 }, { item: 'xuantie', min: 1, max: 1, chance: 0.4 }, { item: 'xuantieSword', min: 1, max: 1, chance: 0.05 }] },
+  { id: 'wulinGod', zone: '缥缈峰', name: '武林神话', icon: '🐲', levelReq: 45, hp: 1600, atk: 62, def: 28, weak: 'hidden', drops: [{ item: 'coin', min: 1000, max: 2000, chance: 1 }, { item: 'renshen', min: 1, max: 1, chance: 0.3 }, { item: 'jiuzhuan', min: 1, max: 1, chance: 0.1 }, { item: 'hiddenManual', min: 1, max: 1, chance: 0.08 }] },
+  { id: 'fireLizard', zone: '熔岩洞', name: '火蜥蜴', icon: '🦎', levelReq: 48, hp: 2200, atk: 78, def: 36, weak: 'inner', drops: [{ item: 'coin', min: 1500, max: 3000, chance: 1 }, { item: 'coldIron', min: 1, max: 1, chance: 0.4 }, { item: 'qiankunCrystal', min: 1, max: 1, chance: 0.12 }] },
+  { id: 'lavaBeast', zone: '熔岩洞', name: '熔岩巨兽', icon: '🌋', levelReq: 56, hp: 3400, atk: 95, def: 45, weak: 'fist', drops: [{ item: 'coin', min: 2500, max: 5000, chance: 1 }, { item: 'neidan', min: 1, max: 1, chance: 0.35 }, { item: 'dragonSword', min: 1, max: 1, chance: 0.04 }, { item: 'innerManual', min: 1, max: 1, chance: 0.08 }] },
+  { id: 'skySoldier', zone: '九霄云巅', name: '天兵幻影', icon: '⚡', levelReq: 62, hp: 5000, atk: 115, def: 55, weak: 'sword', drops: [{ item: 'coin', min: 4000, max: 8000, chance: 1 }, { item: 'godIron', min: 1, max: 1, chance: 0.35 }, { item: 'xuanwuArmor', min: 1, max: 1, chance: 0.04 }] },
+  { id: 'skyEmperor', zone: '九霄云巅', name: '九霄帝君', icon: '🌩️', levelReq: 70, hp: 8000, atk: 140, def: 68, weak: 'hidden', drops: [{ item: 'coin', min: 8000, max: 15000, chance: 1 }, { item: 'jiuyeLingzhi', min: 1, max: 1, chance: 0.3 }, { item: 'xuanyuanSword', min: 1, max: 1, chance: 0.03 }] },
 ]
 
 export const ZONES = ['野猪林', '黑风寨', '古墓', '缥缈峰', '熔岩洞', '九霄云巅']
@@ -739,6 +762,74 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 're3', name: '三生有幸', icon: '🍀', desc: '完成 3 次轮回', bonus: '经验 +10%', xpPct: 10, check: s => s.rebirths >= 3 },
   { id: 're7', name: '七世轮回', icon: '♾️', desc: '完成 7 次轮回', bonus: '经验 +20%', xpPct: 20, check: s => s.rebirths >= 7 },
 ]
+
+// ─── 江湖名号（身份感：按总等级自动晋升）──────────────────────────────────────
+export interface TitleDef {
+  name: string
+  icon: string
+  minTotalLevel: number
+}
+
+export const TITLES: TitleDef[] = [
+  { name: '初入江湖', icon: '🥋', minTotalLevel: 1 },
+  { name: '崭露头角', icon: '🗡️', minTotalLevel: 50 },
+  { name: '小有名气', icon: '🎋', minTotalLevel: 150 },
+  { name: '声名鹊起', icon: '🌄', minTotalLevel: 300 },
+  { name: '名震一方', icon: '🐉', minTotalLevel: 500 },
+  { name: '武林盟主', icon: '👑', minTotalLevel: 800 },
+  { name: '传说', icon: '🌟', minTotalLevel: 1200 },
+]
+
+/** 根据总等级取当前名号（取最高可达档） */
+export function titleFor(totalLevel: number): TitleDef {
+  let cur = TITLES[0]
+  for (const t of TITLES) {
+    if (totalLevel >= t.minTotalLevel) cur = t
+    else break
+  }
+  return cur
+}
+
+// ─── 江湖群侠榜（模拟群侠：固定名单，数值随玩家动态缩放）─────────────────────
+export interface LeaderDef {
+  name: string
+  icon: string
+  epithet: string
+  flavor: string
+}
+
+export const LEADERS: LeaderDef[] = [
+  { name: '西门吹雪', icon: '❄️', epithet: '剑神', flavor: '一剑霜寒十四州，据说从未有人见过他出第二剑。' },
+  { name: '东方求败', icon: '☯️', epithet: '不世出', flavor: '一生求败而不得，如今退隐山林，每日与孤雁对坐。' },
+  { name: '扫地僧', icon: '🧹', epithet: '扫地神僧', flavor: '藏经阁扫地八十年，秘境已到 40 层，深藏不露。' },
+  { name: '燕十三', icon: '🗡️', epithet: '夺命剑十三', flavor: '他的剑路只有十三式，但江湖无人能接满十三式。' },
+  { name: '百晓生', icon: '📜', epithet: '江湖活百科', flavor: '著《兵器谱》一卷，传说记载了天下兵器的秘密。' },
+  { name: '楚留香', icon: '🪶', epithet: '盗帅', flavor: '闻香识人，来去无踪，他的扇子一出场就散着玫瑰香。' },
+  { name: '郭巨侠', icon: '🏹', epithet: '侠之大者', flavor: '镇守襄阳二十八载，一双铁掌可开山裂石。' },
+  { name: '唐门少主', icon: '💉', epithet: '暗器宗师', flavor: '蜀中唐门第十八代传人，袖中藏着八百种暗器。' },
+  { name: '金轮法王', icon: '🔔', epithet: '密宗圣者', flavor: '五轮齐出，鬼神辟易，内功深不可测。' },
+  { name: '慕容公子', icon: '🎭', epithet: '复国公子', flavor: '「以彼之道还施彼身」，天下武学皆能信手拈来。' },
+  { name: '令狐冲', icon: '🍶', epithet: '笑傲剑客', flavor: '嗜酒如命，醉中剑法反比清醒时更凌厉三分。' },
+  { name: '无名老乞丐', icon: '🥣', epithet: '藏拙高人', flavor: '终日蜷在破庙打盹，露出的手掌却覆满老茧。' },
+  { name: '龙女', icon: '🐉', epithet: '古墓仙子', flavor: '冷若冰霜，剑出则天地为之失声。' },
+  { name: '洪七公', icon: '🍜', epithet: '北丐', flavor: '吃遍天下美食，人称「九指神丐」，降龙掌天下无双。' },
+  { name: '杨大侠', icon: '🦅', epithet: '神雕侠', flavor: '独臂行天下，一柄玄铁重剑重剑无锋、大巧不工。' },
+  { name: '段公子', icon: '🪷', epithet: '六脉剑客', flavor: '大理段氏一阳指传人，指力可隔空点穴。' },
+  { name: '神侯', icon: '🦉', epithet: '神鬼六扇门', flavor: '铁狱追魂，江湖榜七大名捕之首，消息通天。' },
+  { name: '铁掌水上漂', icon: '💦', epithet: '轻功第一', flavor: '踏水无痕，他飞掠湖面的速度比鱼还快。' },
+  { name: '李清愁', icon: '🌸', epithet: '紫衣神医', flavor: '妙手回春，求医者踏破门槛，她却只愿救有缘人。' },
+  { name: '叶孤城', icon: '🌙', epithet: '白云城主', flavor: '「天外飞仙」一剑既出，天下无敌，唯剑神可抗。' },
+]
+
+// ─── 每日悬赏类型（决策点：每天 3 个轮换目标）────────────────────────────────
+export interface DailyQuest {
+  actionId: string
+  count: number
+  progress: number
+  claimed: boolean
+  rewardCoins: number
+  rewardTokens: number
+}
 
 // ─── 轮回 ────────────────────────────────────────────────────────────────────
 export const REBIRTH_REQ_LEVEL = 300 // 总等级门槛
