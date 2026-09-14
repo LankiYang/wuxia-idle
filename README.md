@@ -1,73 +1,69 @@
-# React + TypeScript + Vite
+# 武林闲侠传
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+一款纯前端、开箱即玩的**武侠题材放置（Idle）游戏**。采药采矿、伐木打猎、垂钓江湖，炼丹锻造、烹饪制衣、强化神兵，再入秘境爬塔、轮回转生 —— 按当前数值设计，完整内容可支撑 **2–3 个月** 的游玩消耗。
 
-Currently, two official plugins are available:
+## 快速开始
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev      # 开发预览（默认 http://localhost:5173）
+npm run build    # 产物输出到 dist/
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+无后端、无账号体系，游戏存档保存在浏览器 `localStorage`，打开即玩。
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## 技术栈
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+- **React 19 + TypeScript + Vite**
+- **Tailwind CSS + shadcn/ui**
+- 纯客户端状态引擎（`src/game/engine.ts`），数据与逻辑分离（`src/game/data.ts`）
+
+## 游戏系统
+
+### 生活技能（10 系 · 169 个动作）
+
+| 采集系 | 制造系 |
+|---|---|
+| 🌿 采药 / ⛏️ 采矿 / 🪓 伐木 / 🏹 打猎 / 🎣 钓鱼 | ⚗️ 炼丹 / ⚒️ 锻造 / 🍳 烹饪 / 🧵 制衣 / ✨ 强化 |
+
+- 各系 **12–16 档**动作，延伸到 Lv.70，同级有并行品类，不是"同一物品分多级"
+- 进阶锻造：旧兵器 + 材料 → 下一代神兵，旧装备有处可去
+- 分解炉：任意物品分解为市价 40% 铜钱，珍品额外炼出「玄晶」精华
+- 炼化转化：玄晶可换顶级材料，部分损耗的道具互换
+
+### 战斗与武学
+
+- 7 条战斗成长线：气血 / 攻击 / 防御 / 剑法 / 拳掌 / 暗器 / 内功
+- 多个武学流派，各 **6 招**（最高 Lv.75 解锁）
+- 12 种怪物分区分布，离线也有收益结算
+
+### 装备与词缀
+
+- **165 种物品**，武器含刀 / 枪 / 扇 / 斧并行线共 13 把，防具 12 件
+- 顶级神兵：屠龙刀 / 方天画戟 / 诛仙剑（ATK 160）、鸿蒙道袍（DEF 140）
+- **词缀系统**：装备时随机凝聚 1–3 条词缀（50% / 35% / 15%），8 正 3 诅咒按权重抽取
+- 重铸消耗玄晶，15% 概率留下裂痕，3 道裂痕后定型 —— 有随机、有概率、有上限、有惩罚
+
+### 长线玩法
+
+- **秘境爬塔**：层数推进 + 祝福商店（`LAB_SHOP` / `LAB_BLESSINGS`）
+- **轮回转生**：达到等级要求后转生，永久提升经验与铜钱收益
+- **成就系统**：28 项成就覆盖各系玩法
+- **市场 / 任务 / 江湖频道**：铜钱经济循环与每日目标
+
+## 项目结构
+
 ```
+src/
+├── game/
+│   ├── data.ts        # 全部数值数据：物品/动作/怪物/词缀/成就等（约 430 条目）
+│   └── engine.ts      # 游戏引擎：tick、掉落、词缀、轮回、离线结算
+├── components/        # 界面：技能/背包/战斗/秘境/市场/成就/任务等
+└── ...
+design/
+└── 数值设计.md        # 完整数值设计文档（v6.0）
+```
+
+## 数值设计文档
+
+完整的数值体系、成长曲线与内容消耗测算见 [design/数值设计.md](design/数值设计.md)。
